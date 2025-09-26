@@ -280,8 +280,7 @@ class MainWindow:
         
         # Canvas для изображения
         self.image_canvas = tk.Canvas(
-            image_frame, bg="gray", width=640, height=480,
-            cursor="crosshair"
+            image_frame, bg="gray", width=640, height=480
         )
         self.image_canvas.pack(fill=tk.BOTH, expand=True)
         
@@ -377,30 +376,84 @@ class MainWindow:
             self.update_callback()
     
     def _on_mouse_move(self, event):
-        """Точный мэппинг координат Canvas -> координаты исходного изображения."""
-        if self.display_image is None:
+        """Canvas→Image + стабильная рамка 13×13 и 11×11 (без дрожи)."""
+        if self.display_image is None or not hasattr(self, "image_canvas"):
             return
 
+        # --- 1) Проверяем, что курсор над изображением на Canvas
         x0, y0 = self._disp["x0"], self._disp["y0"]
         scale = max(self._disp["scale"], 1e-9)
         disp_w, disp_h = self._disp["w"], self._disp["h"]
         W, H = self._disp["orig_w"], self._disp["orig_h"]
 
-        # игнорируем движения вне области, где реально нарисовано изображение
         if not (x0 <= event.x < x0 + disp_w and y0 <= event.y < y0 + disp_h):
+            self.image_canvas.delete("cursor_frame")
             return
 
-        # переводим курсор к пикселю исходника
+        # --- 2) Canvas → координаты пикселя исходного изображения
         x_img = int((event.x - x0) / scale)
         y_img = int((event.y - y0) / scale)
-
-        # кламп к границам
         x_img = max(0, min(W - 1, x_img))
         y_img = max(0, min(H - 1, y_img))
-
         self.mouse_pos = (x_img, y_img)
+
+        # --- 3) Сначала обновляем вычисления/визуал в контроллере
         if self.update_callback:
             self.update_callback()
+
+        # Пере-читаем геометрию (могла измениться после апдейта)
+        x0, y0 = self._disp["x0"], self._disp["y0"]
+        scale = max(self._disp["scale"], 1e-9)
+
+        import math
+
+        # --- 4) Границы окон в координатах изображения
+        # Внешняя 13×13: [x-6 .. x+6], правая/нижняя границы EXCLUSIVE (x+7, y+7)
+        x0_img_13 = max(0, x_img - 6)
+        y0_img_13 = max(0, y_img - 6)
+        x1_img_13 = min(W, x_img + 7)
+        y1_img_13 = min(H, y_img + 7)
+
+        # Внутренняя 11×11: [x-5 .. x+5] → (x+6, y+6) EXCLUSIVE
+        x0_img_11 = max(0, x_img - 5)
+        y0_img_11 = max(0, y_img - 5)
+        x1_img_11 = min(W, x_img + 6)
+        y1_img_11 = min(H, y_img + 6)
+
+        # --- 5) Перевод к координатам Canvas, выравненным по пиксельной сетке
+        # Левый/верхний по границе пикселя: floor; правый/нижний: ceil(...)-1
+        def rect_to_canvas(x0i, y0i, x1i_ex, y1i_ex):
+            L = math.floor(x0 + x0i * scale)
+            T = math.floor(y0 + y0i * scale)
+            R = math.ceil (x0 + x1i_ex * scale) - 1
+            B = math.ceil (y0 + y1i_ex * scale) - 1
+            return L, T, R, B
+
+        L13, T13, R13, B13 = rect_to_canvas(x0_img_13, y0_img_13, x1_img_13, y1_img_13)
+        L11, T11, R11, B11 = rect_to_canvas(x0_img_11, y0_img_11, x1_img_11, y1_img_11)
+
+        # --- 6. Рисуем СТАБИЛЬНЫЕ рамки: только 1-px линии на координатах *.5
+        self.image_canvas.delete("cursor_frame")
+
+        def draw_box_1px(L, T, R, B, color, tag="cursor_frame"):
+            l = L + 0.5; t = T + 0.5; r = R + 0.5; b = B + 0.5
+            self.image_canvas.create_line(l, t, r, t, fill=color, width=1, tags=tag)  # top
+            self.image_canvas.create_line(r, t, r, b, fill=color, width=1, tags=tag)  # right
+            self.image_canvas.create_line(r, b, l, b, fill=color, width=1, tags=tag)  # bottom
+            self.image_canvas.create_line(l, b, l, t, fill=color, width=1, tags=tag)  # left
+
+        # Внешняя 13×13 — делаем «толстой» как ДВА 1-px контура (стабильно!)
+        draw_box_1px(L13, T13, R13, B13, "#FFD400")                 # первый жёлтый
+        draw_box_1px(L13-1, T13-1, R13+1, B13+1, "#FFD400")         # второй жёлтый, наружу на 1px
+
+        # Внутренняя 11×11 — обычная тонкая (как у тебя и работала стабильно)
+        draw_box_1px(L11, T11, R11, B11, "#FFFFFF")
+
+        self.image_canvas.tag_raise("cursor_frame")
+
+
+
+
 
     
     def _on_mouse_click(self, event):
