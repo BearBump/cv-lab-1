@@ -25,6 +25,7 @@ class ScrollableFrame(ttk.Frame):
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.scrollable_frame = ttk.Frame(self.canvas)
         
+        
         # Настраиваем прокрутку
         self.scrollable_frame.bind(
             "<Configure>",
@@ -71,7 +72,8 @@ class MainWindow:
         self.root.title(GUI_SETTINGS["window_title"])
         self.root.geometry("1200x800")
         self.root.minsize(*GUI_SETTINGS["min_window_size"])
-        
+        self._disp = {"x0": 0, "y0": 0, "scale": 1.0, "w": 0, "h": 0, "orig_w": 0, "orig_h": 0}
+
         # Переменные для хранения изображений
         self.original_image = None
         self.processed_image = None
@@ -375,29 +377,31 @@ class MainWindow:
             self.update_callback()
     
     def _on_mouse_move(self, event):
-        """Обработчик движения мыши."""
-        if self.display_image:
-            # Преобразуем координаты canvas в координаты изображения
-            canvas_width = self.image_canvas.winfo_width()
-            canvas_height = self.image_canvas.winfo_height()
-            
-            if canvas_width > 1 and canvas_height > 1:
-                # Получаем размеры изображения на canvas
-                img_width = self.display_image.width()
-                img_height = self.display_image.height()
-                
-                # Вычисляем масштаб
-                scale_x = img_width / canvas_width
-                scale_y = img_height / canvas_height
-                
-                # Преобразуем координаты
-                x = int(event.x * scale_x)
-                y = int(event.y * scale_y)
-                
-                self.mouse_pos = (x, y)
-                
-                if self.update_callback:
-                    self.update_callback()
+        """Точный мэппинг координат Canvas -> координаты исходного изображения."""
+        if self.display_image is None:
+            return
+
+        x0, y0 = self._disp["x0"], self._disp["y0"]
+        scale = max(self._disp["scale"], 1e-9)
+        disp_w, disp_h = self._disp["w"], self._disp["h"]
+        W, H = self._disp["orig_w"], self._disp["orig_h"]
+
+        # игнорируем движения вне области, где реально нарисовано изображение
+        if not (x0 <= event.x < x0 + disp_w and y0 <= event.y < y0 + disp_h):
+            return
+
+        # переводим курсор к пикселю исходника
+        x_img = int((event.x - x0) / scale)
+        y_img = int((event.y - y0) / scale)
+
+        # кламп к границам
+        x_img = max(0, min(W - 1, x_img))
+        y_img = max(0, min(H - 1, y_img))
+
+        self.mouse_pos = (x_img, y_img)
+        if self.update_callback:
+            self.update_callback()
+
     
     def _on_mouse_click(self, event):
         """Обработчик клика мыши."""
@@ -588,46 +592,50 @@ class MainWindow:
         self.update_callback = callback
     
     def update_image_display(self, image: np.ndarray):
-        """Обновляет отображение изображения."""
+        """Обновляет отображение изображения c сохранением геометрии показа."""
         if image is None:
             return
-        
-        # Если включен режим каналов, обновляем каналы и отображаем текущий
+
+        # режим каналов обрабатываем как раньше
         if self.channel_mode:
             self._create_channels(image)
             self._update_channel_display()
             return
-        
-        # Обычное отображение изображения
-        # Конвертируем BGR в RGB
-        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # Создаем PIL изображение
-        pil_image = Image.fromarray(rgb_image)
-        
-        # Масштабируем изображение для отображения
-        canvas_width = self.image_canvas.winfo_width()
-        canvas_height = self.image_canvas.winfo_height()
-        
-        if canvas_width > 1 and canvas_height > 1:
-            # Вычисляем масштаб с сохранением пропорций
-            img_width, img_height = pil_image.size
-            scale = min(canvas_width / img_width, canvas_height / img_height)
-            
-            new_width = int(img_width * scale)
-            new_height = int(img_height * scale)
-            
-            pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Конвертируем в PhotoImage
-        self.display_image = ImageTk.PhotoImage(pil_image)
-        
-        # Очищаем canvas и отображаем изображение
+
+        # исходные размеры изображения
+        orig_h, orig_w = image.shape[:2]
+
+        # размеры canvas
+        cw = self.image_canvas.winfo_width()
+        ch = self.image_canvas.winfo_height()
+        if cw < 2 or ch < 2:
+            # если окно ещё не промерилось — попробуем повторить позже
+            self.root.after(10, lambda: self.update_image_display(image))
+            return
+
+        # считаем масштаб вписывания и смещения (центрирование)
+        scale = min(cw / orig_w, ch / orig_h)
+        disp_w = int(orig_w * scale)
+        disp_h = int(orig_h * scale)
+        x0 = (cw - disp_w) // 2
+        y0 = (ch - disp_h) // 2
+
+        # конвертация BGR->RGB и ресайз для показа
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(rgb).resize((disp_w, disp_h), Image.Resampling.NEAREST)
+
+        # сохраняем геометрию показа для корректного мэппинга курсора
+        self._disp.update({
+            "x0": x0, "y0": y0, "scale": scale,
+            "w": disp_w, "h": disp_h,
+            "orig_w": orig_w, "orig_h": orig_h
+        })
+
+        # рисуем строго из левого-верхнего угла прямоугольника показа
+        self.display_image = ImageTk.PhotoImage(pil)
         self.image_canvas.delete("all")
-        self.image_canvas.create_image(
-            canvas_width // 2, canvas_height // 2,
-            image=self.display_image, anchor=tk.CENTER
-        )
+        self.image_canvas.create_image(x0, y0, image=self.display_image, anchor="nw")
+
     
     def update_zoom_display(self, zoom_image: np.ndarray):
         """Обновляет отображение zoom окна."""

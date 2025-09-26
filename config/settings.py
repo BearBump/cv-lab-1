@@ -55,7 +55,7 @@ WINDOW_NAMES = {
 
 # Настройки GUI
 GUI_SETTINGS = {
-    "window_title": "Image Processing Application",
+    "window_title": "Лаба 1",
     "min_window_size": (800, 600),
     "default_image_size": (640, 480),
     "update_interval": 15,  # мс
