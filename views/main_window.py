@@ -450,11 +450,6 @@ class MainWindow:
         draw_box_1px(L11, T11, R11, B11, "#FFFFFF")
 
         self.image_canvas.tag_raise("cursor_frame")
-
-
-
-
-
     
     def _on_mouse_click(self, event):
         """Обработчик клика мыши."""

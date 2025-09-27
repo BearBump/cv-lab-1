@@ -212,9 +212,9 @@ class ImageProcessor:
         intensity = (red_channel + green_channel + blue_channel) / 3.0
         
         # Вычисляем статистики
-        pixel_count = intensity.size
+        pixel_count = intensity.size # 121 если не у края
         sum_intensity = float(intensity.sum())
-        sum_squared = float((intensity * intensity).sum())
+        sum_squared = float((intensity * intensity).sum()) # для дисперсии
         
         mean_intensity = sum_intensity / max(pixel_count, 1)
         variance = sum_squared / max(pixel_count, 1) - (mean_intensity * mean_intensity)
