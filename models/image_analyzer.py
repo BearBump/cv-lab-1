@@ -27,7 +27,7 @@ class ImageAnalyzer:
     
     def make_histogram_image(self, bgr: np.ndarray) -> np.ndarray:
         """
-        Создает изображение с гистограммами яркости для серого и RGB каналов.
+        Создает изображение с отдельными гистограммами для каждого канала.
         
         Args:
             bgr: Изображение в формате BGR
@@ -50,47 +50,58 @@ class ImageAnalyzer:
         green_histogram = np.bincount(green_channel.ravel(), minlength=HISTOGRAM_BINS).astype(np.float32)
         blue_histogram = np.bincount(blue_channel.ravel(), minlength=HISTOGRAM_BINS).astype(np.float32)
 
-        def normalize_histogram(histogram: np.ndarray) -> np.ndarray:
-            """Нормирует гистограмму на высоту полотна."""
+        # Размеры для каждой отдельной гистограммы (2x2 сетка)
+        hist_width = HISTOGRAM_WIDTH // 2
+        hist_height = HISTOGRAM_HEIGHT // 2
+        
+        def normalize_histogram(histogram: np.ndarray, target_height: int) -> np.ndarray:
+            """Нормирует гистограмму на заданную высоту."""
             if histogram.max() < 1e-9:
                 return histogram
-            return (histogram / histogram.max()) * (HISTOGRAM_HEIGHT - 20)
+            return (histogram / histogram.max()) * (target_height - 20)
 
-        # Нормируем гистограммы
-        gray_histogram = normalize_histogram(gray_histogram)
-        red_histogram = normalize_histogram(red_histogram)
-        green_histogram = normalize_histogram(green_histogram)
-        blue_histogram = normalize_histogram(blue_histogram)
-
-        def draw_histogram_line(histogram: np.ndarray, color: Tuple[int, int, int]) -> None:
-            """Рисует линию гистограммы на полотне."""
+        def draw_single_histogram(histogram: np.ndarray, color: Tuple[int, int, int], 
+                                x_offset: int, y_offset: int, label: str) -> None:
+            """Рисует отдельную гистограмму в указанной области."""
+            # Нормируем гистограмму для данной области
+            normalized_hist = normalize_histogram(histogram, hist_height)
+            
+            # Рисуем рамку для этой гистограммы
+            cv2.rectangle(canvas, 
+                         (x_offset, y_offset), 
+                         (x_offset + hist_width - 1, y_offset + hist_height - 1), 
+                         COLOR_GRAY, 1)
+            
+            # Рисуем гистограмму
             points = []
             for i in range(HISTOGRAM_BINS):
-                x_coord = int(i * (HISTOGRAM_WIDTH - 1) / (HISTOGRAM_BINS - 1))
-                y_coord = HISTOGRAM_HEIGHT - 10 - int(histogram[i])
+                x_coord = x_offset + int(i * (hist_width - 1) / (HISTOGRAM_BINS - 1))
+                y_coord = y_offset + hist_height - 10 - int(normalized_hist[i])
                 points.append((x_coord, y_coord))
             
             for i in range(1, len(points)):
                 cv2.line(canvas, points[i - 1], points[i], color, 1, cv2.LINE_AA)
+            
+            # Добавляем подпись
+            cv2.putText(
+                canvas, 
+                label, 
+                (x_offset + 5, y_offset + 15), 
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                0.5, 
+                color, 
+                1, 
+                cv2.LINE_AA
+            )
 
-        # Рисуем гистограммы: серый (белый), затем B, G, R
-        draw_histogram_line(gray_histogram, COLOR_WHITE)
-        draw_histogram_line(blue_histogram, COLOR_BLUE)
-        draw_histogram_line(green_histogram, COLOR_GREEN)
-        draw_histogram_line(red_histogram, COLOR_RED)
-
-        # Рисуем рамку и подпись
-        cv2.rectangle(canvas, (0, 0), (HISTOGRAM_WIDTH - 1, HISTOGRAM_HEIGHT - 1), COLOR_GRAY, 1)
-        cv2.putText(
-            canvas, 
-            "Hist: Gray (white), B, G, R", 
-            (8, 18), 
-            cv2.FONT_HERSHEY_SIMPLEX, 
-            0.55, 
-            COLOR_LIGHT_GRAY, 
-            1, 
-            cv2.LINE_AA
-        )
+        # Рисуем 4 отдельные гистограммы в сетке 2x2
+        # Верхний ряд: Gray (слева), Red (справа)
+        draw_single_histogram(gray_histogram, COLOR_WHITE, 0, 0, "Gray")
+        draw_single_histogram(red_histogram, COLOR_RED, hist_width, 0, "Red")
+        
+        # Нижний ряд: Green (слева), Blue (справа)
+        draw_single_histogram(green_histogram, COLOR_GREEN, 0, hist_height, "Green")
+        draw_single_histogram(blue_histogram, COLOR_BLUE, hist_width, hist_height, "Blue")
         
         return canvas
     
