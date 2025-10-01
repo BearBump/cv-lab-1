@@ -120,7 +120,7 @@ class ImageProcessor:
 
         if getattr(self, "use_pillow", False):
             # --- PILLOW РЕЖИМ ---
-            # Импортируем локально (лениво)
+            # Импортируем локально
             try:
                 from PIL import Image, ImageOps, ImageEnhance
             except Exception:
@@ -144,8 +144,13 @@ class ImageProcessor:
                 pil = ImageEnhance.Contrast(pil).enhance(max(contrast_factor, 0.0))
                 # (1а) Глобальная "яркость" как множитель (переводим твой оффсет в фактор)
                 # Простой маппинг: 100 -> 1.0; 150 -> 1.5; 50 -> 0.5
-                brightness_factor = max(0.0, 1.0 + brightness_offset / 100.0)
-                pil = ImageEnhance.Brightness(pil).enhance(brightness_factor)
+                # (1а) Глобальная "яркость" как АДДИТИВНЫЙ сдвиг (точно как в NumPy)
+                from models.pillow_processor import brighten_additive_pillow, pil_to_bgr, bgr_to_pil
+                # pil у нас уже есть; конвертируем туда-обратно через функции из pillow_processor
+                pil_bgr_tmp = pil_to_bgr(pil)
+                pil_bgr_tmp = brighten_additive_pillow(pil_bgr_tmp, brightness_offset)
+                pil = bgr_to_pil(pil_bgr_tmp)
+
 
                 # (1b) Сдвиги по каналам
                 r, g, b = pil.split()
@@ -193,7 +198,7 @@ class ImageProcessor:
             # если Pillow не удалось — ниже отработает NumPy-вариант
 
         if not getattr(self, "use_pillow", False):
-            # --- NumPy РЕЖИМ (твой исходный) ---
+            # --- NumPy РЕЖИМ ---
             processed = self._apply_brightness_contrast_per_channel(
                 processed, brightness_offset, red_offset, green_offset, blue_offset, contrast_factor
             )
