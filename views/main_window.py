@@ -108,6 +108,7 @@ class MainWindow:
             "negate_b": tk.BooleanVar(value=False),
             "flip_horizontal": tk.BooleanVar(value=False),
             "flip_vertical": tk.BooleanVar(value=False),
+            "backend": tk.StringVar(value="numpy"),  # 'numpy' или 'pillow'
         }
         
         # Позиция мыши
@@ -252,6 +253,25 @@ class MainWindow:
             command=self._on_parameter_change
         )
         flip_v_check.pack(anchor=tk.W, pady=(0, 10))
+
+        # --- Режим обработки (NumPy / Pillow) ---
+        ttk.Label(left_frame, text="Режим обработки:").pack(anchor=tk.W, pady=(10, 0))
+
+        backend_frame = ttk.Frame(left_frame)
+        backend_frame.pack(fill=tk.X, pady=(2, 10))
+
+        ttk.Radiobutton(
+            backend_frame, text="NumPy (ручная математика)",
+            value="numpy", variable=self.params["backend"],
+            command=self._on_parameter_change
+        ).pack(anchor=tk.W)
+
+        ttk.Radiobutton(
+            backend_frame, text="Pillow (библиотечный вариант)",
+            value="pillow", variable=self.params["backend"],
+            command=self._on_parameter_change
+        ).pack(anchor=tk.W)
+
         
         # Режим каналов
         ttk.Label(left_frame, text="Режим просмотра:").pack(anchor=tk.W)

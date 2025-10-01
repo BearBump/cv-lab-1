@@ -22,6 +22,8 @@ class ImageProcessor:
         self.original_image = None
         self.processed_image = None
         self.params_dirty = True
+        self.use_pillow = False  # переключатель режима обработки: False=NumPy, True=Pillow
+
         
         # Параметры обработки
         self.params = {
@@ -96,17 +98,13 @@ class ImageProcessor:
     def process_image(self) -> np.ndarray:
         """
         Обрабатывает изображение согласно текущим параметрам.
-        
-        Returns:
-            Обработанное изображение
         """
         if self.original_image is None or not self.params_dirty:
             return self.processed_image
-        
-        # Начинаем с исходного изображения
+
         processed = self.original_image.copy()
-        
-        # Извлекаем параметры
+
+        # Извлекаем параметры из self.params (как и было)
         brightness_offset = self.params["brightness"] - 100
         contrast_factor = self.params["contrast"] / 100.0
         red_offset = self.params["r_offset"] - 100
@@ -117,33 +115,97 @@ class ImageProcessor:
         negate_red = self.params["negate_r"]
         negate_green = self.params["negate_g"]
         negate_blue = self.params["negate_b"]
-        
-        # Применяем эффекты в порядке:
-        # 1) Контраст, яркость и сдвиги каналов
-        processed = self._apply_brightness_contrast_per_channel(
-            processed, brightness_offset, red_offset, green_offset, 
-            blue_offset, contrast_factor
-        )
-        
-        # 2) Гамма-коррекция
-        processed = self._apply_gamma(processed, gamma_value)
-        
-        # 3) Инверсия выбранных каналов
-        processed = self._invert_selected_channels(
-            processed, negate_red, negate_green, negate_blue
-        )
-        
-        # 4) Перестановка каналов
-        processed = self._swap_channels(processed, swap_mode)
-        
-        # 5) Отражения
-        processed = self._flip_image(
-            processed, self.params["flip_horizontal"], self.params["flip_vertical"]
-        )
-        
+        flip_h = self.params["flip_horizontal"]
+        flip_v = self.params["flip_vertical"]
+
+        if getattr(self, "use_pillow", False):
+            # --- PILLOW РЕЖИМ ---
+            # Импортируем локально (лениво)
+            try:
+                from PIL import Image, ImageOps, ImageEnhance
+            except Exception:
+                # Если Pillow не установлен, тихо откатываемся к NumPy-ветке
+                self.use_pillow = False
+
+            if self.use_pillow:
+                # Вспомогательные конвертеры BGR<->Pillow RGB (без внешних модулей)
+                def _bgr_to_pil(bgr_np):
+                    rgb = bgr_np[..., ::-1].copy()
+                    return Image.fromarray(rgb, mode="RGB")
+
+                def _pil_to_bgr(pil_img):
+                    import numpy as _np
+                    rgb = _np.array(pil_img.convert("RGB"), dtype=_np.uint8)
+                    return rgb[..., ::-1].copy()
+
+                pil = _bgr_to_pil(processed)
+
+                # (1) Контраст
+                pil = ImageEnhance.Contrast(pil).enhance(max(contrast_factor, 0.0))
+                # (1а) Глобальная "яркость" как множитель (переводим твой оффсет в фактор)
+                # Простой маппинг: 100 -> 1.0; 150 -> 1.5; 50 -> 0.5
+                brightness_factor = max(0.0, 1.0 + brightness_offset / 100.0)
+                pil = ImageEnhance.Brightness(pil).enhance(brightness_factor)
+
+                # (1b) Сдвиги по каналам
+                r, g, b = pil.split()
+                def _shift(ch, off):
+                    return ch.point(lambda v: max(0, min(255, int(v) + int(off))))
+                r = _shift(r, red_offset)
+                g = _shift(g, green_offset)
+                b = _shift(b, blue_offset)
+                pil = Image.merge("RGB", (r, g, b))
+
+                # (2) Гамма через LUT
+                if abs(gamma_value - 1.0) > 1e-6:
+                    inv = 1.0 / max(gamma_value, 1e-6)
+                    lut = [int(((i/255.0)**inv) * 255 + 0.5) for i in range(256)]
+                    pil = pil.point(lut * 3)
+
+                # (3) Инверсии по каналам
+                if any([negate_red, negate_green, negate_blue]):
+                    r, g, b = pil.split()
+                    if negate_red:   from PIL import ImageOps as _io; r = _io.invert(r)
+                    if negate_green: from PIL import ImageOps as _io; g = _io.invert(g)
+                    if negate_blue:  from PIL import ImageOps as _io; b = _io.invert(b)
+                    pil = Image.merge("RGB", (r, g, b))
+
+                # (4) Перестановка каналов
+                if isinstance(swap_mode, str):
+                    r, g, b = pil.split()
+                    mapping = {
+                        "RGB": (r, g, b), "RBG": (r, b, g),
+                        "GRB": (g, r, b), "GBR": (g, b, r),
+                        "BRG": (b, r, g), "BGR": (b, g, r),
+                    }
+                    pil = Image.merge("RGB", mapping.get(swap_mode, (r, g, b)))
+
+                # (5) Отражения
+                if flip_h:
+                    from PIL import ImageOps as _io
+                    pil = _io.mirror(pil)
+                if flip_v:
+                    from PIL import ImageOps as _io
+                    pil = _io.flip(pil)
+
+                processed = _pil_to_bgr(pil)
+
+            # если Pillow не удалось — ниже отработает NumPy-вариант
+
+        if not getattr(self, "use_pillow", False):
+            # --- NumPy РЕЖИМ (твой исходный) ---
+            processed = self._apply_brightness_contrast_per_channel(
+                processed, brightness_offset, red_offset, green_offset, blue_offset, contrast_factor
+            )
+            processed = self._apply_gamma(processed, gamma_value)
+            processed = self._invert_selected_channels(processed, negate_red, negate_green, negate_blue)
+            processed = self._swap_channels(processed, swap_mode)
+            processed = self._flip_image(processed, flip_h, flip_v)
+
         self.processed_image = processed
         self.params_dirty = False
         return processed
+
     
     def to_gray_manual(self, bgr: np.ndarray) -> np.ndarray:
         """
@@ -212,13 +274,13 @@ class ImageProcessor:
         intensity = (red_channel + green_channel + blue_channel) / 3.0
         
         # Вычисляем статистики
-        pixel_count = intensity.size # 121 если не у края
-        sum_intensity = float(intensity.sum())
-        sum_squared = float((intensity * intensity).sum()) # для дисперсии
+        pixel_count = intensity.size # количество пикселей в окне 121 если не у края
+        sum_intensity = float(intensity.sum()) # сумма всех интенсивностей в окне
+        sum_squared = float((intensity * intensity).sum()) # сумма квадратов интенсивностей. для дисперсии
         
-        mean_intensity = sum_intensity / max(pixel_count, 1)
-        variance = sum_squared / max(pixel_count, 1) - (mean_intensity * mean_intensity)
-        std_deviation = math.sqrt(max(variance, 0.0))
+        mean_intensity = sum_intensity / max(pixel_count, 1) # средняя яркость пикселей в окне
+        variance = sum_squared / max(pixel_count, 1) - (mean_intensity * mean_intensity) # Дисперсия яркости
+        std_deviation = math.sqrt(max(variance, 0.0)) # стандартное отклонение яркости (разброс значений интенсивности)
         
         return mean_intensity, std_deviation
     

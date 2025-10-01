@@ -82,6 +82,9 @@ class GUIController:
         
         # Получаем параметры из UI
         ui_params = self.main_window.get_parameters()
+
+        # выбор бэкенда обработки: NumPy или Pillow
+        self.processor.use_pillow = (ui_params.get("backend") == "pillow")
         
         # Обновляем параметры процессора
         self.processor.set_parameter("brightness", ui_params["brightness"])
