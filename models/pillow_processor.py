@@ -28,7 +28,7 @@ def pil_to_bgr(img: Image.Image) -> np.ndarray:
 # ---------------------------------------------------------------------
 # A) ЯРКОСТЬ
 # ---------------------------------------------------------------------
-# 1) Аддитивная яркость (полное совпадение с твоей ручной математикой):
+# 1) Аддитивная яркость:
 #    value' = value + beta, где beta = brightness - 100
 def brighten_additive_pillow(bgr: np.ndarray, beta: int) -> np.ndarray:
     pil = bgr_to_pil(bgr).convert("RGB")
@@ -38,7 +38,7 @@ def brighten_additive_pillow(bgr: np.ndarray, beta: int) -> np.ndarray:
     b = b.point(lambda v: _clamp(int(v) + int(beta)))
     return pil_to_bgr(Image.merge("RGB", (r, g, b)))
 
-# 2) Мультипликативная яркость (классический Pillow-вариант — оставляем как опцию)
+# 2) Мультипликативная яркость (классический Pillow-вариант)
 #    ВНИМАНИЕ: factor=0 делает картинку чёрной (это и отличает его от NumPy-аддитивного)
 def brighten_multiplicative_pillow(bgr: np.ndarray, factor: float) -> np.ndarray:
     pil = bgr_to_pil(bgr)
@@ -113,7 +113,7 @@ def gamma_pillow(bgr: np.ndarray, gamma: float) -> np.ndarray:
     g = max(float(gamma), 1e-6)
     inv = 1.0 / g
 
-    # Строим LUT в соответствии с твоими настройками (0..MAX_PIXEL_VALUE)
+    # Строим LUT в соответствии с настройками (0..MAX_PIXEL_VALUE)
     pixel_values = np.arange(HISTOGRAM_BINS, dtype=np.float32) / float(MAX_PIXEL_VALUE)
     lut = np.clip(
         (pixel_values ** inv) * float(MAX_PIXEL_VALUE),

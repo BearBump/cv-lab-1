@@ -119,83 +119,47 @@ class ImageProcessor:
         flip_v = self.params["flip_vertical"]
 
         if getattr(self, "use_pillow", False):
-            # --- PILLOW РЕЖИМ ---
-            # Импортируем локально
             try:
-                from PIL import Image, ImageOps, ImageEnhance
+                # 👇 Берём готовые обёртки из модуля
+                from models.pillow_processor import (
+                    contrast_pillow,
+                    brighten_additive_pillow,
+                    channel_offsets_pillow,
+                    gamma_pillow,
+                    invert_channels_pillow,
+                    swap_channels_pillow,
+                    flip_pillow,
+                )
             except Exception:
-                # Если Pillow не установлен, тихо откатываемся к NumPy-ветке
                 self.use_pillow = False
 
             if self.use_pillow:
-                # Вспомогательные конвертеры BGR<->Pillow RGB (без внешних модулей)
-                def _bgr_to_pil(bgr_np):
-                    rgb = bgr_np[..., ::-1].copy()
-                    return Image.fromarray(rgb, mode="RGB")
-
-                def _pil_to_bgr(pil_img):
-                    import numpy as _np
-                    rgb = _np.array(pil_img.convert("RGB"), dtype=_np.uint8)
-                    return rgb[..., ::-1].copy()
-
-                pil = _bgr_to_pil(processed)
+                # Начинаем в BGR-формате (все функции возвращают BGR)
+                pil_bgr = processed
 
                 # (1) Контраст
-                pil = ImageEnhance.Contrast(pil).enhance(max(contrast_factor, 0.0))
-                # (1а) Глобальная "яркость" как множитель (переводим твой оффсет в фактор)
-                # Простой маппинг: 100 -> 1.0; 150 -> 1.5; 50 -> 0.5
-                # (1а) Глобальная "яркость" как АДДИТИВНЫЙ сдвиг (точно как в NumPy)
-                from models.pillow_processor import brighten_additive_pillow, pil_to_bgr, bgr_to_pil
-                # pil у нас уже есть; конвертируем туда-обратно через функции из pillow_processor
-                pil_bgr_tmp = pil_to_bgr(pil)
-                pil_bgr_tmp = brighten_additive_pillow(pil_bgr_tmp, brightness_offset)
-                pil = bgr_to_pil(pil_bgr_tmp)
+                pil_bgr = contrast_pillow(pil_bgr, contrast_factor)
 
+                # (1a) Яркость — АДДИТИВНО (полное совпадение с NumPy-поведением)
+                pil_bgr = brighten_additive_pillow(pil_bgr, brightness_offset)
 
-                # (1b) Сдвиги по каналам
-                r, g, b = pil.split()
-                def _shift(ch, off):
-                    return ch.point(lambda v: max(0, min(255, int(v) + int(off))))
-                r = _shift(r, red_offset)
-                g = _shift(g, green_offset)
-                b = _shift(b, blue_offset)
-                pil = Image.merge("RGB", (r, g, b))
+                # (1b) Сдвиги отдельных каналов
+                pil_bgr = channel_offsets_pillow(pil_bgr, red_offset, green_offset, blue_offset)
 
-                # (2) Гамма через LUT
-                if abs(gamma_value - 1.0) > 1e-6:
-                    inv = 1.0 / max(gamma_value, 1e-6)
-                    lut = [int(((i/255.0)**inv) * 255 + 0.5) for i in range(256)]
-                    pil = pil.point(lut * 3)
+                # (2) Гамма (через LUT, учитывает settings)
+                pil_bgr = gamma_pillow(pil_bgr, gamma_value)
 
-                # (3) Инверсии по каналам
-                if any([negate_red, negate_green, negate_blue]):
-                    r, g, b = pil.split()
-                    if negate_red:   from PIL import ImageOps as _io; r = _io.invert(r)
-                    if negate_green: from PIL import ImageOps as _io; g = _io.invert(g)
-                    if negate_blue:  from PIL import ImageOps as _io; b = _io.invert(b)
-                    pil = Image.merge("RGB", (r, g, b))
+                # (3) Инверсии по выбранным каналам
+                pil_bgr = invert_channels_pillow(pil_bgr, negate_red, negate_green, negate_blue)
 
                 # (4) Перестановка каналов
-                if isinstance(swap_mode, str):
-                    r, g, b = pil.split()
-                    mapping = {
-                        "RGB": (r, g, b), "RBG": (r, b, g),
-                        "GRB": (g, r, b), "GBR": (g, b, r),
-                        "BRG": (b, r, g), "BGR": (b, g, r),
-                    }
-                    pil = Image.merge("RGB", mapping.get(swap_mode, (r, g, b)))
+                pil_bgr = swap_channels_pillow(pil_bgr, swap_mode)
 
                 # (5) Отражения
-                if flip_h:
-                    from PIL import ImageOps as _io
-                    pil = _io.mirror(pil)
-                if flip_v:
-                    from PIL import ImageOps as _io
-                    pil = _io.flip(pil)
+                pil_bgr = flip_pillow(pil_bgr, flip_h, flip_v)
 
-                processed = _pil_to_bgr(pil)
+                processed = pil_bgr
 
-            # если Pillow не удалось — ниже отработает NumPy-вариант
 
         if not getattr(self, "use_pillow", False):
             # --- NumPy РЕЖИМ ---
